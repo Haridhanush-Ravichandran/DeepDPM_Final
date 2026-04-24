@@ -168,7 +168,7 @@ def run_on_embeddings_hyperparams(parent_parser):
     parser.add_argument(
         "--start_sub_clustering",
         type=int,
-        default=45,
+        default=25,
     )
     parser.add_argument(
         "--subcluster_loss_weight",
@@ -178,7 +178,7 @@ def run_on_embeddings_hyperparams(parent_parser):
     parser.add_argument(
         "--start_splitting",
         type=int,
-        default=55,
+        default=25,
     )
     parser.add_argument(
         "--alpha",
@@ -217,7 +217,7 @@ def run_on_embeddings_hyperparams(parent_parser):
     parser.add_argument(
         "--start_merging",
         type=int,
-        default=55,
+        default=25,
         help="The epoch in which to start consider merge proposals",
     )
     parser.add_argument(
@@ -242,7 +242,7 @@ def run_on_embeddings_hyperparams(parent_parser):
     parser.add_argument(
         "--split_merge_every_n_epochs",
         type=int,
-        default=30,
+        default=10,
         help="Example: if set to 10, split proposals will be made every 10 epochs",
     )
     parser.add_argument(

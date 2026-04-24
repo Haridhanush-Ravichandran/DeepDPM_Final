@@ -293,7 +293,7 @@ class ClusterNetModel(pl.LightningModule):
             Scalar loss.
         """
         temperature   = getattr(self.hparams, "contrastive_temperature", 0.07)
-        soft_blend    = getattr(self.hparams, "contrastive_soft_blend",  0.3)
+        soft_blend    = getattr(self.hparams, "contrastive_soft_blend",  0.0)
 
         # ── L2-normalise so dot-product == cosine similarity ──────────────
         z_a_n = F.normalize(z_a, dim=1)

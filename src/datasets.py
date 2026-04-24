@@ -383,9 +383,14 @@ class CustomDataset(MyDataset):
         
         if train_codes.ndim==3:
             self._data_dim = train_codes.size()[2]
+            train_labels=torch.load(os.path.join(self.data_dir, "train_labels.pt"))
         else:
             self._data_dim = train_codes.size()[1]
-        
+            if self.args.use_labels_for_eval:
+                train_labels = torch.load(os.path.join(self.data_dir, "train_labels.pt"))
+            else:
+                train_labels = torch.zeros((train_codes.size()[0]))
+            
         train_set = TensorDatasetWrapper(train_codes, train_labels)
         del train_codes
         del train_labels
