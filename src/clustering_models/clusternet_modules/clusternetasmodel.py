@@ -210,6 +210,16 @@ class ClusterNetModel(pl.LightningModule):
         if codes_b is not None:
             codes_b = codes_b.reshape(-1, self.codes_dim)
             logits_b = self.cluster_net(codes_b)
+            cluster_loss_b = self.training_utils.cluster_loss_function(
+                codes_b,
+                logits_b,
+                model_mus=self.mus,
+                K=self.K,
+                codes_dim=self.codes_dim,
+                model_covs=self.covs if self.hparams.cluster_loss in ("diag_NIG", "KL_GMM_2") else None,
+                pi=self.pi,
+                logger=self.logger
+            )
 
             # y holds the pair label: 1 = same cluster, 0 = different cluster
             pair_labels = y.float().to(codes.device)
@@ -222,7 +232,7 @@ class ClusterNetModel(pl.LightningModule):
                 codes, codes_b, pair_labels, soft_a, soft_b
             )
             self.log("cluster_net_train/train/pairwise_loss", pairwise_loss/self.K, on_epoch=True)
-            loss = loss + (1 - self.hparams.cluster_loss_weight) * pairwise_loss
+            loss = loss + (1 - self.hparams.cluster_loss_weight) * pairwise_loss + self.hparams.cluster_loss_weight*cluster_loss_b
         if not self.hparams.ignore_subclusters and optimizer_idx == self.optimizers_dict_idx["subcluster_net_opt"]:
             # optimize the subclusters' nets
             logits = logits.detach()
