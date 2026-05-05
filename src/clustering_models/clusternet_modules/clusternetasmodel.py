@@ -172,7 +172,6 @@ class ClusterNetModel(pl.LightningModule):
                 model_resp_sub=self.train_resp_sub,
                 codes=codes,
                 y=y,
-                z=z,
                 logits=None,
             )
         return None
@@ -280,7 +279,7 @@ class ClusterNetModel(pl.LightningModule):
                 self.train_resp_sub,
                 codes,
                 logits.detach(),
-                y,z,
+                y,
                 sublogits=sublogits,
             )
 
@@ -329,8 +328,9 @@ class ClusterNetModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         if batch[0].ndim==3:
-            x, y = batch
+            x, y ,z= batch
         else:
+            x,y=batch
         if self.feature_extractor is not None:
             with torch.no_grad():
                 codes = torch.from_numpy(

@@ -17,7 +17,7 @@ def best_cluster_fit(y_true, y_pred):
     y_true = y_true.astype(np.int64)
     D = max(y_pred.max(), y_true.max()) + 1
     w = np.zeros((D, D), dtype=np.int64)
-    for i in range(y_pred.size):
+    for i in range(min(y_pred.size,y_true.size)):
         w[y_pred[i], y_true[i]] += 1
 
     row_ind, col_ind = linear_assignment(w.max() - w)

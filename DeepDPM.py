@@ -421,10 +421,21 @@ def train_cluster_net():
     # evaluate last model
     dataset = dataset_obj.get_train_data()
     data = dataset.tensors[0]
-    net_pred = model(data).argmax(axis=1).cpu().numpy()
+    emb_a = data[:, 0, :].contiguous()
+    net_pred = model(emb_a).argmax(axis=1).cpu().numpy()
     if args.use_labels_for_eval:
         # evaluate model using labels
         labels = dataset.targets.numpy()
+        print(data.shape)
+        print(net_pred.shape)
+        print(labels.shape)
+        import numpy as np
+
+        unique, counts = np.unique(net_pred, return_counts=True)
+
+        for cls, cnt in zip(unique, counts):
+            print(f"Class {cls}: {cnt}")
+        
         acc = np.round(cluster_acc(labels, net_pred), 5)
         nmi = np.round(NMI(net_pred, labels), 5)
         ari = np.round(ARI(net_pred, labels), 5)
