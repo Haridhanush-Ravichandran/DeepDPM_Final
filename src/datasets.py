@@ -379,7 +379,7 @@ class CustomDataset(MyDataset):
             train_codes = transform_embeddings(self.args.transform_input_data, train_codes)
         if train_codes.ndim==3:
             self._data_dim = train_codes.size()[2]
-            train_labels = torch.zeros((train_codes.size()[0]))
+            train_labels = torch.load(os.path.join(self.data_dir, "train_labels.pt"))
             train_rot_labels=torch.load(os.path.join(self.data_dir,"train_rot_labels.pt"))
         else:
             self._data_dim = train_codes.size()[1]

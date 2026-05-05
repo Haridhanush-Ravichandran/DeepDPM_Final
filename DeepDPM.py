@@ -483,7 +483,7 @@ def train_cluster_net():
     net_pred = model(emb_a).argmax(axis=1).cpu().numpy()
     if args.use_labels_for_eval:
         # evaluate model using labels
-        labels = dataset.targets.numpy()
+        labels = dataset.tensors[1].numpy()       
         print(data.shape)
         print(net_pred.shape)
         print(labels.shape)
