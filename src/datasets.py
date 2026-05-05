@@ -361,10 +361,11 @@ class GMM_dataset(MyDataset):
 
 
 class TensorDatasetWrapper(TensorDataset):
-    def __init__(self, data, labels):
-        super().__init__(data, labels)
+    def __init__(self, data, labels,rot):
+        super().__init__(data, labels,rot)
         self.data = data
         self.targets = labels
+        self.rot=rot
 
 class CustomDataset(MyDataset):
     def __init__(self, args):
@@ -376,14 +377,10 @@ class CustomDataset(MyDataset):
         train_codes = torch.Tensor(torch.load(os.path.join(self.data_dir, "train_data.pt")))
         if self.args.transform_input_data:
             train_codes = transform_embeddings(self.args.transform_input_data, train_codes)
-        if self.args.use_labels_for_eval:
-            train_labels = torch.load(os.path.join(self.data_dir, "train_labels.pt"))
-        else:
-            train_labels = torch.zeros((train_codes.size()[0]))
-        
         if train_codes.ndim==3:
             self._data_dim = train_codes.size()[2]
             train_labels=torch.load(os.path.join(self.data_dir, "train_labels.pt"))
+            train_rot_labels=torch.load(os.path.join(self.data_dir,"train_rot_labels.pt"))
         else:
             self._data_dim = train_codes.size()[1]
             if self.args.use_labels_for_eval:
@@ -391,9 +388,10 @@ class CustomDataset(MyDataset):
             else:
                 train_labels = torch.zeros((train_codes.size()[0]))
             
-        train_set = TensorDatasetWrapper(train_codes, train_labels)
+        train_set = TensorDatasetWrapper(train_codes, train_labels,train_rot_labels)
         del train_codes
         del train_labels
+        del train_rot_labels
         return train_set
 
     def get_test_data(self):
@@ -412,11 +410,14 @@ class CustomDataset(MyDataset):
         
         if test_codes.ndim==3:
             self._data_dim = test_codes.size()[2]
+            test_rot_labels=torch.load(os.path.join(self.data_dir,"test_rot_labels.pt"))
+
         else:
             self._data_dim = test_codes.size()[1]
         test_set = TensorDatasetWrapper(test_codes, test_labels)
         del test_codes
         del test_labels
+        del test_rot_labels
         return test_set
 
 

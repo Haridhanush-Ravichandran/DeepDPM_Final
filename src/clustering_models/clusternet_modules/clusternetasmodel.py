@@ -123,7 +123,10 @@ class ClusterNetModel(pl.LightningModule):
             self.val_gt = []
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        x, y = batch
+        if batch[0].ndim == 3:
+            x,y,z=batch
+        else:
+            x,y=batch
 
         
 
@@ -139,15 +142,15 @@ class ClusterNetModel(pl.LightningModule):
             codes_a = x
             codes_b = None
         if self.current_training_stage == "gather_codes":
-            return self.only_gather_codes(codes_a, y, optimizer_idx)
+            return self.only_gather_codes(codes_a, y,z, optimizer_idx)
 
         elif self.current_training_stage == "train_cluster_net":
-            return self.cluster_net_pretraining(codes_a,codes_b, y, optimizer_idx, x if batch_idx == 0 else None)
+            return self.cluster_net_pretraining(codes_a,codes_b, y,z, optimizer_idx, x if batch_idx == 0 else None)
 
         else:
             raise NotImplementedError()
 
-    def only_gather_codes(self, codes, y, optimizer_idx):
+    def only_gather_codes(self, codes, y,z, optimizer_idx):
         """Only log codes for initialization
 
         Args:
@@ -169,6 +172,7 @@ class ClusterNetModel(pl.LightningModule):
                 model_resp_sub=self.train_resp_sub,
                 codes=codes,
                 y=y,
+                z=z,
                 logits=None,
             )
         return None
@@ -176,7 +180,7 @@ class ClusterNetModel(pl.LightningModule):
     def cluster_net_pretraining(
         self,
         codes,codes_b=None,
-        y=None,
+        y=None,z=None,
         optimizer_idx=0,
         x_for_vis=None
     ):
@@ -222,7 +226,7 @@ class ClusterNetModel(pl.LightningModule):
             )
 
             # y holds the pair label: 1 = same cluster, 0 = different cluster
-            pair_labels = y.float().to(codes.device)
+            pair_labels = z.float().to(codes.device)
 
             # Soft responsibilities from the cluster net [N, K]
             soft_a = torch.softmax(logits,   dim=-1)   # P(cluster | codes_a)
@@ -276,7 +280,7 @@ class ClusterNetModel(pl.LightningModule):
                 self.train_resp_sub,
                 codes,
                 logits.detach(),
-                y,
+                y,z,
                 sublogits=sublogits,
             )
 
@@ -324,7 +328,9 @@ class ClusterNetModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
+        if batch[0].ndim==3:
+            x, y = batch
+        else:
         if self.feature_extractor is not None:
             with torch.no_grad():
                 codes = torch.from_numpy(
