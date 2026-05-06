@@ -181,7 +181,7 @@ def run_on_embeddings_hyperparams(parent_parser):
     parser.add_argument(
         "--start_splitting",
         type=int,
-        default=25,
+        default=45,
     )
     parser.add_argument(
         "--alpha",
@@ -479,7 +479,7 @@ def train_cluster_net():
     # evaluate last model
     dataset = dataset_obj.get_train_data()
     data = dataset.tensors[0]
-    emb_a = data[:, 0, :].contiguous()
+    emb_a = data[:, 0, :].contiguous() if data.ndim ==3 else data
     net_pred = model(emb_a).argmax(axis=1).cpu().numpy()
     if args.use_labels_for_eval:
         # evaluate model using labels

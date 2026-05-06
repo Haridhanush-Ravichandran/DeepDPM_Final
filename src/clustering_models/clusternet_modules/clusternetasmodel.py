@@ -127,6 +127,7 @@ class ClusterNetModel(pl.LightningModule):
             x,y,z=batch
         else:
             x,y=batch
+            z=None
 
         
 
