@@ -361,10 +361,11 @@ class GMM_dataset(MyDataset):
 
 
 class TensorDatasetWrapper(TensorDataset):
-    def __init__(self, data, labels):
-        super().__init__(data, labels)
+    def __init__(self, data, labels,rot):
+        super().__init__(data, labels,rot)
         self.data = data
         self.targets = labels
+        self.rot=rot
 
 class CustomDataset(MyDataset):
     def __init__(self, args):
@@ -406,7 +407,7 @@ class CustomDataset(MyDataset):
                 test_labels = torch.zeros((test_codes.size()[0]))
         except FileNotFoundError:
             print("Test data not found! running only with train data")
-            return TensorDatasetWrapper(torch.empty(0), torch.empty(0))
+            return TensorDatasetWrapper(torch.empty(0), torch.empty(0),torch.empty(0))
         
         if self.args.transform_input_data:
             test_codes = transform_embeddings(self.args.transform_input_data, test_codes)
