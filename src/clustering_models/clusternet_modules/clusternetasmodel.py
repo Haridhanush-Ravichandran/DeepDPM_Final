@@ -1020,7 +1020,7 @@ class ClusterNetModel(pl.LightningModule):
 
         if self.hparams.offline and ((self.hparams.log_metrics_at_train and stage == "train") or ( not self.hparams.log_metrics_at_train and stage!="train")):
             print(f"NMI : {gt_nmi}, ARI: {ari}, ACC: {acc}, current K: {unique_z}")
-        if self.current_epoch % 10 == 0:
+        if self.current_epoch % 10 == 0 and self.current_epoch >45:
             print(f"Epoch {self.current_epoch} | NMI: {gt_nmi:.4f}, ARI: {ari:.4f}, ACC: {acc:.4f}, current K: {unique_z}")
             cm = confusion_matrix(gt.cpu().numpy(), z.cpu().numpy())
             print("Confusion Matrix:")
