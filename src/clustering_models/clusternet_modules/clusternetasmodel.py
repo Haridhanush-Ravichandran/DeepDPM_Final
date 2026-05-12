@@ -228,9 +228,17 @@ class ClusterNetModel(pl.LightningModule):
             # y holds the pair label: 1 = same cluster, 0 = different cluster
             pair_labels = z.float().to(codes.device)
 
-            # Soft responsibilities from the cluster net [N, K]
+            '''# Soft responsibilities from the cluster net [N, K]
             soft_a = torch.softmax(logits,   dim=-1)   # P(cluster | codes_a)
             soft_b = torch.softmax(logits_b, dim=-1)   # P(cluster | codes_b)
+
+            pairwise_loss = self.contrastive_loss(
+                codes, codes_b, pair_labels, soft_a, soft_b
+            )'''
+
+            # recompute so graph is fresh for soft_a — logits may have been used above
+            soft_a = torch.softmax(self.cluster_net(codes), dim=-1)    # [N, K]
+            soft_b = torch.softmax(self.cluster_net(codes_b), dim=-1)  # [N, K]
 
             pairwise_loss = self.contrastive_loss(
                 codes, codes_b, pair_labels, soft_a, soft_b
@@ -289,7 +297,7 @@ class ClusterNetModel(pl.LightningModule):
         else:
             return None
 
-    def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
+    '''def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
         """Supervised contrastive loss for pairwise embeddings.
 
         Uses cosine-similarity with a temperature scale (SupCon-style).
@@ -324,6 +332,21 @@ class ClusterNetModel(pl.LightningModule):
             target = pair_labels
 
         # ── Binary cross-entropy: same pair → high sim, diff pair → low ──
+        loss = F.binary_cross_entropy_with_logits(sim, target)
+        return loss'''
+    def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
+        temperature = getattr(self.hparams, "contrastive_temperature", 0.07)
+
+        # Use soft cluster assignments as the similarity signal
+        # This ensures gradients flow through class_fc2 even when cluster_loss_weight=0
+        if soft_a is not None and soft_b is not None:
+            sim = (soft_a * soft_b).sum(dim=1) / temperature  # [N]
+        else:
+            z_a_n = F.normalize(z_a, dim=1)
+            z_b_n = F.normalize(z_b, dim=1)
+            sim = (z_a_n * z_b_n).sum(dim=1) / temperature
+
+        target = pair_labels
         loss = F.binary_cross_entropy_with_logits(sim, target)
         return loss
 
