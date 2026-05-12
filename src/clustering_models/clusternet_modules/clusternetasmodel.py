@@ -7,7 +7,7 @@
 from argparse import ArgumentParser
 import numpy as np
 import matplotlib.pyplot as plt
-
+from sklearn.metrics import confusion_matrix
 import torch
 from torch import optim
 import pytorch_lightning as pl
@@ -1020,7 +1020,11 @@ class ClusterNetModel(pl.LightningModule):
 
         if self.hparams.offline and ((self.hparams.log_metrics_at_train and stage == "train") or ( not self.hparams.log_metrics_at_train and stage!="train")):
             print(f"NMI : {gt_nmi}, ARI: {ari}, ACC: {acc}, current K: {unique_z}")
-
+        if self.current_epoch % 10 == 0:
+            print(f"Epoch {self.current_epoch} | NMI: {gt_nmi:.4f}, ARI: {ari:.4f}, ACC: {acc:.4f}, current K: {unique_z}")
+            cm = confusion_matrix(gt.cpu().numpy(), z.cpu().numpy())
+            print("Confusion Matrix:")
+            print(cm)
         if self.current_epoch in (0, 1, self.hparams.train_cluster_net - 1):
             alt_stage = "start" if self.current_epoch == 1 or self.hparams.train_cluster_net % self.current_epoch == 0 else "end"
 
