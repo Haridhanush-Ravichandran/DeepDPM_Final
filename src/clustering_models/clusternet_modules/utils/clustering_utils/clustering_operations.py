@@ -8,7 +8,7 @@ import torch
 from kmeans_pytorch import kmeans as GPU_KMeans
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-
+import numpy as np
 
 def init_mus_and_covs(codes, K, how_to_init_mu, logits, use_priors=True, prior=None, random_state=0, device="cpu"):
     """This function initalizes the clusters' centers and covariances matrices.
@@ -116,7 +116,10 @@ def init_mus_and_covs_sub(codes, k, n_sub, how_to_init_mu_sub, logits, logits_su
             mus_sub = prior.compute_post_mus(counts, mus_sub.cpu())
             covs_sub = []
             for k in range(n_sub):
-                covs_sub_k = prior.compute_post_cov(counts[k], codes_k[labels == k].mean(axis=0), data_covs_sub[k])
+                if k < len(counts) and len(codes_k[labels == k]) > 0:
+                    covs_sub_k = prior.compute_post_cov(counts[k], codes_k[labels == k].mean(axis=0), data_covs_sub[k])
+                else:
+                    _, covs_sub_k = prior.init_priors(codes_k)
                 covs_sub.append(covs_sub_k)
             covs_sub = torch.stack(covs_sub)
         else:
@@ -136,6 +139,11 @@ def init_mus_and_covs_sub(codes, k, n_sub, how_to_init_mu_sub, logits, logits_su
         pca = PCA(n_components=1).fit(codes_k.detach().cpu())
         pca_codes = pca.fit_transform(codes_k.detach().cpu())
         # kmeans = KMeans(n_clusters=n_sub, random_state=random_state).fit(pca_codes)
+        
+        pca_codes_tensor = torch.from_numpy(pca_codes)
+        if torch.isnan(pca_codes_tensor).any():
+            pca_codes = np.nan_to_num(pca_codes, nan=0.0)
+            pca_codes_tensor = torch.from_numpy(pca_codes)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         labels, cluster_centers = GPU_KMeans(X=torch.from_numpy(pca_codes).to(device=device), num_clusters=n_sub, device=torch.device(device))
 
@@ -157,11 +165,13 @@ def init_mus_and_covs_sub(codes, k, n_sub, how_to_init_mu_sub, logits, logits_su
             mus_sub = prior.compute_post_mus(counts, mus_sub.cpu())
             covs_sub = []
             for k in range(n_sub):
-                cov_sub_k = prior.compute_post_cov(counts[k], codes_k[labels == k].mean(axis=0), data_covs_sub[k])
+                # Guard: if counts doesn't have index k (collapsed cluster), use fallback
+                if k < len(counts) and len(codes_k[labels == k]) > 0:
+                    cov_sub_k = prior.compute_post_cov(counts[k], codes_k[labels == k].mean(axis=0), data_covs_sub[k])
+                else:
+                    _, cov_sub_k = prior.init_priors(codes_k)
                 covs_sub.append(cov_sub_k)
             covs_sub = torch.stack(covs_sub)
-        else:
-            covs_sub = data_covs_sub
 
         pi_sub = counts / float(len(codes))
         return mus_sub, covs_sub, pi_sub
@@ -180,6 +190,11 @@ def compute_data_sigma_sq_hard_assignment(labels, codes, K, mus):
 
 
 def compute_data_covs_hard_assignment(labels, codes, K, mus, prior):
+    if torch.is_tensor(codes) and (torch.isnan(codes).any() or torch.isinf(codes).any()):
+        codes = torch.nan_to_num(codes, nan=0.0, posinf=1.0, neginf=-1.0)
+    if torch.is_tensor(mus) and (torch.isnan(mus).any() or torch.isinf(mus).any()):
+        mus = torch.nan_to_num(mus, nan=0.0, posinf=1.0, neginf=-1.0)
+    
     if prior and prior.mus_covs_prior.name == "NIG":
         return compute_data_sigma_sq_hard_assignment(labels, codes, K, mus)
     else:
@@ -195,7 +210,7 @@ def compute_data_covs_hard_assignment(labels, codes, K, mus, prior):
                 cov_k = cov_k / N_k
             else:
                 if prior:
-                    _, cov_k = prior.init_priors()
+                    _, cov_k = prior.init_priors(codes)
                 else:
                     cov_k = torch.eye(codes.shape[1]) * 0.0005
             covs.append(cov_k)
