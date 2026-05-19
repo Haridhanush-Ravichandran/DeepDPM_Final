@@ -80,6 +80,24 @@ class ClusterNetModel(pl.LightningModule):
         self.mus_inds_to_merge = None
         self.mus_ind_to_split = None
 
+    def contrastive_loss(self, z1, z2, pair_label, margin=1.0):
+
+        z1 = torch.nn.functional.normalize(z1, dim=1)
+        z2 = torch.nn.functional.normalize(z2, dim=1)
+
+        dist = torch.nn.functional.pairwise_distance(z1, z2)
+
+        positive_loss = pair_label.float() * torch.pow(dist, 2)
+
+        negative_loss = (
+            (1 - pair_label.float())
+            * torch.pow(torch.clamp(margin - dist, min=0.0), 2)
+        )
+
+        loss = torch.mean(positive_loss + negative_loss)
+
+        return loss
+
     def forward(self, x):
         if self.feature_extractor is not None:
             with torch.no_grad():
@@ -193,9 +211,11 @@ class ClusterNetModel(pl.LightningModule):
             optimizer_idx ([type]): The pytorch optimizer index
         """
         codes = codes.reshape(-1, self.codes_dim)
-        logits = self.cluster_net(codes)
+        codes_a = torch.nn.functional.normalize(codes, dim=1)
+
+        logits = self.cluster_net(codes_a)
         cluster_loss = self.training_utils.cluster_loss_function(
-            codes,
+            codes_a,
             logits,
             model_mus=self.mus,
             K=self.K,
@@ -213,6 +233,7 @@ class ClusterNetModel(pl.LightningModule):
         loss = self.hparams.cluster_loss_weight * cluster_loss
         if codes_b is not None:
             codes_b = codes_b.reshape(-1, self.codes_dim)
+            codes_b = torch.nn.functional.normalize(codes_b, dim=1)
             logits_b = self.cluster_net(codes_b)
             cluster_loss_b = self.training_utils.cluster_loss_function(
                 codes_b,
@@ -236,12 +257,8 @@ class ClusterNetModel(pl.LightningModule):
                 codes, codes_b, pair_labels, soft_a, soft_b
             )'''
 
-            # recompute so graph is fresh for soft_a — logits may have been used above
-            soft_a = torch.softmax(self.cluster_net(codes), dim=-1)    # [N, K]
-            soft_b = torch.softmax(self.cluster_net(codes_b), dim=-1)  # [N, K]
-
             pairwise_loss = self.contrastive_loss(
-                codes, codes_b, pair_labels, soft_a, soft_b
+                codes, codes_b, pair_labels, margin=self.hparams.contrastive_margin
             )
             self.log("cluster_net_train/train/pairwise_loss", pairwise_loss/self.K, on_epoch=True)
             loss = loss + (1 - self.hparams.cluster_loss_weight) * pairwise_loss + self.hparams.cluster_loss_weight*cluster_loss_b
@@ -287,7 +304,7 @@ class ClusterNetModel(pl.LightningModule):
                 self.train_resp,
                 self.train_resp_sub,
                 codes,
-                logits.detach(),
+                logits.detach() if logits is not None else None,
                 y,
                 sublogits=sublogits,
             )
@@ -333,7 +350,7 @@ class ClusterNetModel(pl.LightningModule):
 
         # ── Binary cross-entropy: same pair → high sim, diff pair → low ──
         loss = F.binary_cross_entropy_with_logits(sim, target)
-        return loss'''
+        return loss
     def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
         temperature = getattr(self.hparams, "contrastive_temperature", 0.07)
 
@@ -348,7 +365,7 @@ class ClusterNetModel(pl.LightningModule):
 
         target = pair_labels
         loss = F.binary_cross_entropy_with_logits(sim, target)
-        return loss
+        return loss'''
 
     def validation_step(self, batch, batch_idx):
         if batch[0].ndim==3:
@@ -521,14 +538,29 @@ class ClusterNetModel(pl.LightningModule):
                 avg_subclus_loss = torch.stack([x["loss"] for x in subclus_losses]).mean()
                 self.log("cluster_net_train/train/avg_subcluster_loss", avg_subclus_loss)
 
-            # Compute mus and perform splits/merges
+            '''# Compute mus and perform splits/merges
             perform_split = self.training_utils.should_perform_split(
                 self.current_epoch
             ) and self.centers is None
             perform_merge = self.training_utils.should_perform_merge(
                 self.current_epoch,
                 self.split_performed
-            ) and self.centers is None
+            ) and self.centers is None'''
+            if self.hparams.contrastive_only and (self.current_epoch<100):
+
+                perform_split = False
+                perform_merge = False
+
+            else:
+
+                perform_split = self.training_utils.should_perform_split(
+                    self.current_epoch
+                ) and self.centers is None
+
+                perform_merge = self.training_utils.should_perform_merge(
+                    self.current_epoch,
+                    self.split_performed
+                ) and self.centers is None
             # do not compute the mus in the epoch(s) following a split or a merge
             if self.centers is not None:
                 # we have initialization from somewhere
@@ -541,7 +573,7 @@ class ClusterNetModel(pl.LightningModule):
                 self.split_performed
             ) or self.current_epoch <= self.freeze_mus_after_init_until
 
-            if not freeze_mus:
+            if (not freeze_mus) and (not self.hparams.contrastive_only):
                 (
                     self.pi,
                     self.mus,
@@ -570,7 +602,9 @@ class ClusterNetModel(pl.LightningModule):
                 )
             elif (
                 self.hparams.start_sub_clustering <= self.current_epoch
-                and not freeze_mus and not self.hparams.ignore_subclusters
+                and not freeze_mus
+                and not self.hparams.ignore_subclusters
+                and not self.hparams.contrastive_only
             ):
                 (
                     self.pi_sub,
@@ -652,7 +686,7 @@ class ClusterNetModel(pl.LightningModule):
                             self.plot_utils.plot_cluster_and_decision_boundaries(samples=self.codes, labels=self.train_resp.argmax(-1), gt_labels=self.train_gt, net_centers=self.mus, net_covs=self.covs, n_epoch=self.current_epoch, cluster_net=self)
                     if self.current_epoch in (0, 1, 2, 3, 4, 5, 10, 100, 200, 300, 400, 500, 549, self.hparams.start_sub_clustering, self.hparams.start_sub_clustering+1) or self.split_performed or self.merge_performed:
                         self.plot_histograms(for_thesis=True)
-        
+
         if self.split_performed or self.merge_performed:
             self.update_params_split_merge()
             print("Current number of clusters: ", self.K)
@@ -1369,19 +1403,5 @@ class ClusterNetModel(pl.LightningModule):
             default=5,
             help="How often to evaluate the net"
         )
-        parser.add_argument(
-            "--contrastive_temperature",
-            type=float,
-            default=0.07,
-            help="Temperature for the contrastive (SupCon-style) loss scaling. "
-                 "Lower = sharper, higher = softer. Typical range: 0.05–0.2.",
-        )
-        parser.add_argument(
-            "--contrastive_soft_blend",
-            type=float,
-            default=0.3,
-            help="Blend weight between hard pair labels and soft cluster-assignment "
-                 "agreement. 0.0 = use only hard labels; 1.0 = use only soft "
-                 "responsibilities. Recommended: 0.2–0.4.",
-        )
+        
         return parser

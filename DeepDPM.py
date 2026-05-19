@@ -110,6 +110,21 @@ def run_on_embeddings_hyperparams(parent_parser):
         default=1,
     )
     parser.add_argument(
+        "--contrastive_weight",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--contrastive_margin",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--contrastive_only",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "--init_cluster_net_weights",
         action="store_true",
         default=False,
