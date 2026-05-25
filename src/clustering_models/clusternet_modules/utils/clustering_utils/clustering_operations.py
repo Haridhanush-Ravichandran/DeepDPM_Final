@@ -45,7 +45,10 @@ def init_mus_and_covs(codes, K, how_to_init_mu, logits, use_priors=True, prior=N
             kmeans_mus = torch.from_numpy(kmeans.cluster_centers_)
         else:
             labels, kmeans_mus = _fast_kmeans(X=codes.detach(), num_clusters=K, device=device)
-        _, counts = torch.unique(labels, return_counts=True)
+        unique_labels, counts_nonzero = torch.unique(labels, return_counts=True)
+        # Pad counts to full K in case some clusters are empty
+        counts = torch.zeros(K, dtype=counts_nonzero.dtype)
+        counts[unique_labels] = counts_nonzero
         pi = counts / float(len(codes))
         data_covs = compute_data_covs_hard_assignment(labels, codes, K, kmeans_mus.cpu(), prior)
 
@@ -77,7 +80,9 @@ def init_mus_and_covs(codes, K, how_to_init_mu, logits, use_priors=True, prior=N
             device=device,
             requires_grad=False,
         )
-        _, counts = torch.unique(torch.tensor(labels), return_counts=True)
+        unique_labels, counts_nonzero = torch.unique(torch.tensor(labels), return_counts=True)
+        counts = torch.zeros(K, dtype=counts_nonzero.dtype)
+        counts[unique_labels] = counts_nonzero
         pi = counts / float(len(codes))
         data_covs = compute_data_covs_hard_assignment(labels, codes, K, kmeans_mus.cpu(), prior)
 
@@ -222,7 +227,7 @@ def compute_data_covs_hard_assignment(labels, codes, K, mus, prior):
                 cov_k = cov_k / N_k
             else:
                 if prior:
-                    _, cov_k = prior.init_priors()
+                    _, cov_k = prior.init_priors(codes)
                 else:
                     cov_k = torch.eye(codes.shape[1]) * 0.0005
             covs.append(cov_k)
