@@ -691,6 +691,13 @@ class ClusterNetModel(pl.LightningModule):
             self.update_params_split_merge()
             print("Current number of clusters: ", self.K)
 
+        if not self.split_performed and not self.merge_performed and (perform_split or perform_merge):
+            print(f"[Split/Merge] Epoch {self.current_epoch} | No split or merge accepted (K={self.K})")
+        
+        if self.split_performed or self.merge_performed:
+            action = "split" if self.split_performed else "merge"
+            print(f"[{action.capitalize()}] K updated → {self.K} clusters")
+        
     def validation_epoch_end(self, outputs):
         # Take mean of all batch losses
         avg_loss = torch.stack([x["loss"] for x in outputs]).mean()
@@ -771,6 +778,9 @@ class ClusterNetModel(pl.LightningModule):
         clus_opt.param_groups[1]["params"] = list(self.cluster_net.class_fc2.parameters())
         self.cluster_net.class_fc2.to(self._device)
         mus_ind_to_split = torch.nonzero(torch.tensor(split_decisions), as_tuple=False)
+        split_ratio = len(mus_ind_to_split) / self.K
+        print(f"[Split] Epoch {self.current_epoch} | Clusters to split: {len(mus_ind_to_split)}/{self.K} | Split ratio: {split_ratio:.2%}")
+        
         (
             self.mus_new,
             self.covs_new,
@@ -824,6 +834,9 @@ class ClusterNetModel(pl.LightningModule):
 
         print(f"Merging clusters {mus_lists_to_merge}")
         mus_lists_to_merge = torch.tensor(mus_lists_to_merge)
+        n_merges = len(highest_ll_mus)
+        merge_ratio = n_merges / self.K
+        print(f"[Merge] Epoch {self.current_epoch} | Clusters to merge: {n_merges}/{self.K} | Merge ratio: {merge_ratio:.2%}")
         inds_to_mask = torch.zeros(self.K, dtype=bool)
         inds_to_mask[mus_lists_to_merge.flatten()] = 1
         (
