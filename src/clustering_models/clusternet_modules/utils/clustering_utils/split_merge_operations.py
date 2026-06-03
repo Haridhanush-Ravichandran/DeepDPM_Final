@@ -37,18 +37,19 @@ def log_Hastings_ratio_split(
     """
     N_k = N_k_1 + N_k_2
     if N_k_2 > 0 and N_k_1 > 0:
-        # each subcluster is not empty
         H = (
             np.log(alpha) + lgamma(N_k_1) + log_ll_k_1 + lgamma(N_k_2) + log_ll_k_2
         ) - (lgamma(N_k) + log_ll_k)
         split_prob = split_prob or torch.exp(H)
+        decision = bool(H > 0 or split_prob > torch.rand(1))
+        print(f"  [Split H] H={float(H):.4f} | ll_k={log_ll_k:.4f} ll_k1={log_ll_k_1:.4f} ll_k2={log_ll_k_2:.4f} | N=({N_k_1},{N_k_2}) | accepted={decision}")
+        return decision
     else:
         H = torch.zeros(1)
         split_prob = 0
+        print(f"  [Split H] H=0.0 | empty subcluster N=({N_k_1},{N_k_2}) | accepted=False")
 
-    # if Hastings ratio > 1 (or 0 in log space) perform split, if not, toss a coin
     return bool(H > 0 or split_prob > torch.rand(1))
-
 
 def log_Hastings_ratio_merge(
     alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, merge_prob
@@ -73,7 +74,9 @@ def log_Hastings_ratio_merge(
         H = torch.ones(1)
 
     merge_prob = merge_prob or torch.exp(H)
-    return bool(H > 0 or merge_prob > torch.rand(1))
+    decision = bool(H > 0 or merge_prob > torch.rand(1))
+    print(f"  [Merge H] H={float(H):.4f} | ll_k={log_ll_k:.4f} ll_k1={log_ll_k_1:.4f} ll_k2={log_ll_k_2:.4f} | N=({N_k_1},{N_k_2}) | accepted={decision}")
+    return decision
 
 
 def split_rule(
@@ -85,6 +88,7 @@ def split_rule(
 
     if len(codes_k) < 5:
         # empty cluster
+        print(f"  [Split k={k}] REJECTED — empty cluster (N={len(codes_k)})")
         return [k, False]
 
     if ignore_subclusters:
@@ -100,6 +104,8 @@ def split_rule(
 
     if len(codes_k_1) <= 5 or len(codes_k_2) <= 5:
         # small subclusters
+        print(f"  [Split k={k}] REJECTED — subclusters too small (N_k1={len(codes_k_1)}, N_k2={len(codes_k_2)})")
+
         return [k, False]
 
     # compute log marginal likelihood
