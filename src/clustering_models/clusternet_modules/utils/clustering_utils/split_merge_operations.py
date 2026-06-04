@@ -20,7 +20,7 @@ from src.clustering_models.clusternet_modules.utils.clustering_utils.clustering_
 
 
 def log_Hastings_ratio_split(
-    alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
+    k,alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
 ):
     """This function computes the log Hastings ratio for a split.
 
@@ -42,12 +42,12 @@ def log_Hastings_ratio_split(
         ) - (lgamma(N_k) + log_ll_k)
         split_prob = split_prob or torch.exp(H)
         decision = bool(H > 0 or split_prob > torch.rand(1))
-        print(f"  [Split H] H={float(H):.4f} | ll_k={log_ll_k:.4f} ll_k1={log_ll_k_1:.4f} ll_k2={log_ll_k_2:.4f} | N=({N_k_1},{N_k_2}) | accepted={decision}")
+        print(f"  [Split k={k}] H={float(H):.4f} | ll_k={log_ll_k:.4f} ll_k1={log_ll_k_1:.4f} ll_k2={log_ll_k_2:.4f} | N=({N_k_1},{N_k_2}) | accepted={decision}")
         return decision
     else:
         H = torch.zeros(1)
         split_prob = 0
-        print(f"  [Split H] H=0.0 | empty subcluster N=({N_k_1},{N_k_2}) | accepted=False")
+        print(f"  [Split k={k}] H=0.0 | empty subcluster N=({N_k_1},{N_k_2}) | accepted=False")
 
     return bool(H > 0 or split_prob > torch.rand(1))
 
@@ -119,7 +119,7 @@ def split_rule(
     # use log for overflows
     # Hastings ratio in log space
     return [k, log_Hastings_ratio_split(
-        alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
+        k,alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
     )]
 
 
