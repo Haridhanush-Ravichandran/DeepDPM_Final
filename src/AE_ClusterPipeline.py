@@ -167,7 +167,9 @@ class AE_ClusterPipeline(pl.LightningModule):
             self.clustering.fit_cluster(self.train_dataloader(), self.val_dataloader(), logger=self.logger, centers=used_centers_for_initialization)
             self.n_clusters = self.clustering.n_clusters
 
-    def _pre_step(self, x, y=None):
+    def _pre_step(self, x, y=None,z=None):
+        if x.ndim == 3:
+            x = x[:, 0, :]
         if len(self.sampled_codes) < 10000:
             with torch.no_grad():
                 latent_X = self.feature_extractor(x, latent=True)
@@ -178,7 +180,7 @@ class AE_ClusterPipeline(pl.LightningModule):
         loss = self.criterion(x, rec_X)
         return loss
 
-    def _step(self, x, y):
+    def _step(self, x, y,z=None):
         """Implementing one optimization step.
         1. gets the latent features using a forward pass on the AE
         2. gets the cluster assignments for the latent features (the closest cluster id to each sample is chosen)
@@ -194,7 +196,15 @@ class AE_ClusterPipeline(pl.LightningModule):
         # Get the latent features
         # latent_X = self(x, latent=True) # constant w.r.t to net weights
         # Update the assignments
-        latent_X, cluster_assign = self(x)
+        if z is not None and x.ndim == 3:
+            x_a = x[:, 0, :]
+            x_b = x[:, 1, :]
+            latent_X_a = self.feature_extractor(x_a, latent=True)
+            latent_X_b = self.feature_extractor(x_b, latent=True)
+            latent_X, cluster_assign = latent_X_a, self.clustering.update_assign(latent_X_a)
+            x=x_a
+        else:
+            latent_X, cluster_assign = self(x)
         # save for plotting
         if len(self.sampled_codes) < 10000:
             self.sampled_codes = torch.cat([self.sampled_codes, latent_X.detach().cpu()])
@@ -219,6 +229,8 @@ class AE_ClusterPipeline(pl.LightningModule):
 
     def forward(self, x, latent=False):
         # Get the latent features
+        if x.ndim == 3:
+            x = x[:, 0, :]
         latent_X = self.feature_extractor(x, latent=True)
         if latent:
             # used by the clusternet. net is frozen so no grad accumulated
@@ -265,17 +277,20 @@ class AE_ClusterPipeline(pl.LightningModule):
                 print("========== Finished clustering ==========")
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        x = x.view(x.size(0), -1)
+        if batch[0].ndim == 3:
+            x,y,z=batch
+        else:
+            x,y=batch
+            z=None
 
         if self.pretrain:
             stage = "val_pretrain"
-            loss = self._pre_step(x, y)
+            loss = self._pre_step(x, y,z)
             rec_loss = loss
             dist_loss = torch.tensor([0.])
         else:
             stage = "val"
-            loss, rec_loss, dist_loss = self._step(x, y)
+            loss, rec_loss, dist_loss = self._step(x, y,z)
         self.log(f"{stage}/loss", loss)
         self.log(f"{stage}/reconstruction_loss", rec_loss)
         self.log(f"{stage}/dist_loss", dist_loss)
@@ -285,8 +300,12 @@ class AE_ClusterPipeline(pl.LightningModule):
         return {"loss": loss, "y_gt": y, "y_pred": y_pred}
 
     def training_step(self, batch, batch_idx,):
-        x, y = batch
-        x = x.view(x.size(0), -1)
+        if batch[0].ndim == 3:
+            x,y,z=batch
+        else:
+            x,y=batch
+            z=None
+
 
         if self.pretrain:
             stage = "pretrain"
@@ -294,13 +313,13 @@ class AE_ClusterPipeline(pl.LightningModule):
                 x = x + self.args.pretrain_noise_factor * torch.randn(*x.shape).to(device=self.device)
                 # Clip the images to be between 0 and 1
                 x = np.clip(x.cpu(), 0., 1.).to(device=self.device)
-            loss = self._pre_step(x, y)
+            loss = self._pre_step(x, y,z)
             rec_loss = loss
             dist_loss = torch.tensor([0.])
 
         else:
             stage = "train"
-            loss, rec_loss, dist_loss = self._step(x, y)
+            loss, rec_loss, dist_loss = self._step(x, y,z)
         self.log(f"{stage}/loss", loss)
         self.log(f"{stage}/reconstruction_loss", rec_loss)
         self.log(f"{stage}/dist_loss", dist_loss)
