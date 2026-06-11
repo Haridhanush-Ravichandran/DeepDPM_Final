@@ -39,7 +39,7 @@ def parse_args():
         "--batch-size", type=int, default=128, help="input batch size for training"
     )
     parser.add_argument(
-        "--epoch", type=int, default=300, help="number of epochs to train"
+        "--epoch", type=int, default=100, help="number of epochs to train"
     )
     parser.add_argument(
         "--pretrain_epochs", type=int, default=0, help="number of pre-train epochs"
@@ -218,7 +218,8 @@ def train_clusternet_with_alternations():
     for i, dataset in enumerate([data.get_train_data(), data.get_test_data()]):
         data_ = dataset.data
         data_input = data_[:, 0, :] if data_.ndim == 3 else data_
-        pred = DeepDPM(data_input.to(device=device).float()).argmax(axis=1).cpu().numpy()        net_pred.append(pred)
+        pred = DeepDPM(data_input.to(device=device).float()).argmax(axis=1).cpu().numpy()        
+        net_pred.append(pred)
         if args.use_labels_for_eval:
             # Use the labels to evaluate the model
             labels_ = dataset.targets.numpy()
