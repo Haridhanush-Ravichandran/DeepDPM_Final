@@ -175,7 +175,7 @@ def train_clusternet_with_alternations():
         logger = DummyLogger()
     else:
         logger = TensorBoardLogger(
-            save_dir="logs",
+            save_dir="log_dir",
             name=args.exp_name)
 
     

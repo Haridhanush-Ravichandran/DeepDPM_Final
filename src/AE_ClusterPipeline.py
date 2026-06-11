@@ -25,7 +25,6 @@ to "Towards k-means-friendly spaces: Simultaneous deep learning and clustering",
 http://proceedings.mlr.press/v70/yang17b/yang17b.pdf.
 
 '''
-
 class AE_ClusterPipeline(pl.LightningModule):
     def __init__(self, logger, args, input_dim):
         super(AE_ClusterPipeline, self).__init__()
@@ -35,7 +34,6 @@ class AE_ClusterPipeline(pl.LightningModule):
         self.beta = args.beta  # coefficient of the clustering term
         self.lambda_ = args.lambda_  # coefficient of the reconstruction term
         self.n_clusters = self.args.n_clusters
-        self.lambda_sym=args.lambda_sym
         if self.args.seed:
             pl.utilities.seed.seed_everything(self.args.seed)
 
