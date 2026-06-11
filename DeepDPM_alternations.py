@@ -131,6 +131,21 @@ def parse_args():
         "--gpus",
         default=None
     )
+    parser.add_argument(
+        "--contrastive_weight",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--contrastive_margin",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--contrastive_only",
+        action="store_true",
+        default=False,
+    )
     args = parser.parse_args()
     return args
 
