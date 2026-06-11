@@ -101,9 +101,20 @@ class ClusterNetModel(pl.LightningModule):
     def forward(self, x):
         if self.feature_extractor is not None:
             with torch.no_grad():
-                codes = torch.from_numpy(
-                    self.feature_extractor(x.view(x.size()[0], -1), latent=True)
-                ).to(device=self.device)
+                if x.ndim==3:
+                    x_a=x[:,0,:]
+                    codes_a = torch.from_numpy(
+                        self.feature_extractor(x_a.view(x_a.size()[0], -1), latent=True)
+                    ).to(device=self.device)
+                    x_b=x[:,1,:]
+                    codes_b=torch.from_numpy(
+                        self.feature_extractor(x_b.view(x_b.size()[0], -1), latent=True)
+                    ).to(device=self.device)
+                else:
+                    codes_a=torch.from_numpy(
+                        self.feature_extractor(x.view(x.size()[0], -1), latent=True)
+                    ).to(device=self.device)
+                    codes_b=None
         else:
             codes = x
 

@@ -217,8 +217,8 @@ def train_clusternet_with_alternations():
     # evaluate last model
     for i, dataset in enumerate([data.get_train_data(), data.get_test_data()]):
         data_ = dataset.data
-        pred = DeepDPM(data_.to(device=device).float()).argmax(axis=1).cpu().numpy()
-        net_pred.append(pred)
+        data_input = data_[:, 0, :] if data_.ndim == 3 else data_
+        pred = DeepDPM(data_input.to(device=device).float()).argmax(axis=1).cpu().numpy()        net_pred.append(pred)
         if args.use_labels_for_eval:
             # Use the labels to evaluate the model
             labels_ = dataset.targets.numpy()
