@@ -1174,7 +1174,7 @@ class ClusterNetModel(pl.LightningModule):
         parser.add_argument(
             "--cluster_loss_weight",
             type=float,
-            default=1,
+            default=0.7,
         )
         parser.add_argument(
             "--init_cluster_net_weights",
@@ -1219,7 +1219,7 @@ class ClusterNetModel(pl.LightningModule):
         parser.add_argument(
             "--train_cluster_net",
             type=int,
-            default=300,
+            default=200,
             help="Number of epochs to pretrain the cluster net",
         )
         parser.add_argument(
