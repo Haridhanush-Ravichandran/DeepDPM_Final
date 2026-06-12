@@ -207,7 +207,7 @@ def train_clusternet_with_alternations():
 
     max_epochs = args.epoch * (args.number_of_ae_alternations - 1) + 1
 
-    trainer = pl.Trainer(logger=logger, max_epochs=150, gpus=args.gpus, num_sanity_val_steps=0, checkpoint_callback=False)
+    trainer = pl.Trainer(logger=logger, max_epochs=250, gpus=args.gpus, num_sanity_val_steps=0, checkpoint_callback=False)
     trainer.fit(model, train_loader, val_loader)
 
     model.to(device=device)
