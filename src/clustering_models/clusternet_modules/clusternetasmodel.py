@@ -116,9 +116,9 @@ class ClusterNetModel(pl.LightningModule):
                     ).to(device=self.device)
                     codes_b=None
         else:
-            codes = x
+            codes_a = x
 
-        return self.cluster_net(codes)
+        return self.cluster_net(codes_a)
 
         
 
