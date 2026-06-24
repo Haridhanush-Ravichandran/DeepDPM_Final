@@ -80,7 +80,7 @@ class ClusterNetModel(pl.LightningModule):
         self.mus_inds_to_merge = None
         self.mus_ind_to_split = None
 
-    def contrastive_loss(self, z1, z2, pair_label, margin=1.0):
+    def contrastive_loss(self, z1, z2, pair_label, margin=1.8):
 
         z1 = torch.nn.functional.normalize(z1, dim=1)
         z2 = torch.nn.functional.normalize(z2, dim=1)
@@ -285,34 +285,29 @@ class ClusterNetModel(pl.LightningModule):
             self.log("cluster_net_train/train/pairwise_loss", pairwise_loss/self.K, on_epoch=True)
             loss = loss + (1 - self.hparams.cluster_loss_weight) * pairwise_loss + self.hparams.cluster_loss_weight*cluster_loss_b
         if not self.hparams.ignore_subclusters and optimizer_idx == self.optimizers_dict_idx["subcluster_net_opt"]:
-            # optimize the subclusters' nets
             logits = logits.detach()
             if self.hparams.start_sub_clustering <= self.current_epoch:
                 sublogits = self.subcluster(codes, logits)
                 subcluster_loss = self.training_utils.subcluster_loss_function_new(
-                    codes,
-                    logits,
-                    sublogits,
-                    self.K,
-                    self.n_sub,
-                    self.mus_sub,
-                    covs_sub=self.covs_sub
-                    if self.hparams.subcluster_loss in ("diag_NIG", "KL_GMM_2")
-                    else None,
+                    codes, logits, sublogits, self.K, self.n_sub, self.mus_sub,
+                    covs_sub=self.covs_sub if self.hparams.subcluster_loss in ("diag_NIG", "KL_GMM_2") else None,
                     pis_sub=self.pi_sub
                 )
-                self.log(
-                    "cluster_net_train/train/subcluster_loss",
-                    self.hparams.subcluster_loss_weight * subcluster_loss,
-                    on_step=True,
-                    on_epoch=True,
-                )
                 loss = self.hparams.subcluster_loss_weight * subcluster_loss
+
+                if codes_b is not None:
+                    sublogits_b = self.subcluster(codes_b, logits_b.detach())
+                    pair_labels = z.float().to(codes.device)
+
+                    sub_pairwise_loss = self.contrastive_loss(
+                        sublogits, sublogits_b, pair_labels,
+                        margin=self.hparams.contrastive_margin
+                    )
+                    self.log("cluster_net_train/train/sub_pairwise_loss", sub_pairwise_loss, on_epoch=True)
+                    loss = loss + 0.5 * sub_pairwise_loss
             else:
                 sublogits = None
                 loss = None
-        else:
-            sublogits = None
         # log data only once
         if optimizer_idx == len(self.optimizers_dict_idx) - 1:
             (
@@ -1442,5 +1437,9 @@ class ClusterNetModel(pl.LightningModule):
             default=5,
             help="How often to evaluate the net"
         )
-        
+        parser.add_argument(
+            "--subcluster_contrastive_weight",
+            type=float,
+            default=0.3,
+        )
         return parser
