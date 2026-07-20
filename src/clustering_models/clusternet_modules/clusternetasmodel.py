@@ -3,29 +3,7 @@
 #
 # Copyright (c) 2022 Meitar Ronen
 #
-from src.clustering_models.clusternet_modules.utils.clustering_utils.split_merge_operations import (
-    update_models_parameters_split,
-    split_step,
-    merge_step,
-    update_models_parameters_merge,
-)
-from src.clustering_models.clusternet_modules.utils.clustering_utils.pairwise_constraint_overrides import (
-    get_pair_assignments,
-)
-from src.clustering_models.clusternet_modules.utils.clustering_utils.pairwise_constraint_overrides import (
-    get_pair_assignments,
-    get_cannot_link_codes,
-)
-from src.clustering_models.clusternet_modules.utils.clustering_utils.split_merge_operations import (
-    _create_subclusters,
-    compute_data_covs_soft_assignment,
-    init_mus_and_covs_sub,
-    comp_subclusters_params_min_dist
-)
-from src.clustering_models.clusternet_modules.utils.clustering_utils.pairwise_constraint_overrides import (
-    resolve_split_decision,
-    resolve_merge_decision,
-)
+
 from argparse import ArgumentParser
 import numpy as np
 import matplotlib.pyplot as plt
@@ -162,16 +140,10 @@ class ClusterNetModel(pl.LightningModule):
         self.codes = []
         if stage == "train":
             if self.current_epoch > 0:
-                del self.train_resp, self.train_resp_sub, self.train_gt, \
-                    self.train_pair_resp_a, self.train_pair_resp_b, self.train_pair_labels
+                del self.train_resp, self.train_resp_sub, self.train_gt
             self.train_resp = []
             self.train_resp_sub = []
             self.train_gt = []
-            self.train_pair_resp_a = []
-            self.train_pair_resp_b = []
-            self.train_pair_labels = []
-            self.train_pair_codes_a = []
-            self.train_pair_codes_b = []
         else:
             if self.current_epoch > 0:
                 del self.val_resp, self.val_resp_sub, self.val_gt
@@ -285,7 +257,6 @@ class ClusterNetModel(pl.LightningModule):
             codes_b = codes_b.reshape(-1, self.codes_dim)
             codes_b = torch.nn.functional.normalize(codes_b, dim=1)
             logits_b = self.cluster_net(codes_b)
-  
             cluster_loss_b = self.training_utils.cluster_loss_function(
                 codes_b,
                 logits_b,
@@ -300,11 +271,6 @@ class ClusterNetModel(pl.LightningModule):
             # y holds the pair label: 1 = same cluster, 0 = different cluster
             pair_labels = z.float().to(codes.device)
 
-            self.train_pair_resp_a.append(logits.detach())
-            self.train_pair_resp_b.append(logits_b.detach())
-            self.train_pair_labels.append(pair_labels.detach())
-            self.train_pair_codes_a.append(codes_a.detach())
-            self.train_pair_codes_b.append(codes_b.detach())
             '''# Soft responsibilities from the cluster net [N, K]
             soft_a = torch.softmax(logits,   dim=-1)   # P(cluster | codes_a)
             soft_b = torch.softmax(logits_b, dim=-1)   # P(cluster | codes_b)
@@ -312,12 +278,13 @@ class ClusterNetModel(pl.LightningModule):
             pairwise_loss = self.contrastive_loss(
                 codes, codes_b, pair_labels, soft_a, soft_b
             )'''
-
+            soft_a = torch.softmax(logits, dim=-1)
+            soft_b = torch.softmax(logits_b, dim=-1)
             pairwise_loss = self.contrastive_loss(
-                codes, codes_b, pair_labels, margin=self.hparams.contrastive_margin
+                soft_a, soft_b, pair_labels, margin=self.hparams.contrastive_margin
             )
             self.log("cluster_net_train/train/pairwise_loss", pairwise_loss/self.K, on_epoch=True)
-            loss = loss + (1 - self.hparams.cluster_loss_weight) * pairwise_loss + self.hparams.cluster_loss_weight*cluster_loss_b
+            loss = loss + (0) * pairwise_loss + (0)*cluster_loss_b
         if not self.hparams.ignore_subclusters and optimizer_idx == self.optimizers_dict_idx["subcluster_net_opt"]:
             logits = logits.detach()
             if self.hparams.start_sub_clustering <= self.current_epoch:
@@ -338,7 +305,7 @@ class ClusterNetModel(pl.LightningModule):
                         margin=self.hparams.contrastive_margin
                     )
                     self.log("cluster_net_train/train/sub_pairwise_loss", sub_pairwise_loss, on_epoch=True)
-                    loss = loss + 0.5 * sub_pairwise_loss
+                    loss = loss 
             else:
                 sublogits = None
                 loss = None
@@ -683,26 +650,10 @@ class ClusterNetModel(pl.LightningModule):
                     self.pi_sub,
                     self.prior,
                 )
-            if self.train_pair_labels:
-                pair_assign = get_pair_assignments(
-                    torch.cat(self.train_pair_resp_a),
-                    torch.cat(self.train_pair_resp_b),
-                    torch.cat(self.train_pair_labels),
-                )
-                cl_a, cl_b = pair_assign["cl_a"], pair_assign["cl_b"]
-                cl_codes_a, cl_codes_b = get_cannot_link_codes(
-                    torch.cat(self.train_pair_codes_a),
-                    torch.cat(self.train_pair_codes_b),
-                    torch.cat(self.train_pair_labels),
-                )
-            else:
-                cl_a, cl_b = None, None
-                cl_codes_a, cl_codes_b = None, None
-
             if perform_split and not freeze_mus:
                 # perform splits
                 self.training_utils.last_performed = "split"
-                split_decisions, split_overrides = split_step(
+                split_decisions = split_step(
                     self.K,
                     self.codes,
                     self.train_resp,
@@ -713,13 +664,11 @@ class ClusterNetModel(pl.LightningModule):
                     self.hparams.alpha,
                     self.hparams.split_prob,
                     self.prior,
-                    self.hparams.ignore_subclusters, cl_a, cl_b,
-                    cl_codes_a=cl_codes_a, cl_codes_b=cl_codes_b
+                    self.hparams.ignore_subclusters
                 )
                 if split_decisions.any():
                     self.split_performed = True
-                    self.perform_split_operations(split_decisions, split_overrides)
-                
+                    self.perform_split_operations(split_decisions)
             if perform_merge and not freeze_mus:
                 # make sure no split and merge step occur in the same epoch
                 # perform merges
@@ -734,7 +683,7 @@ class ClusterNetModel(pl.LightningModule):
                     self.hparams.cov_const,
                     self.hparams.alpha,
                     self.hparams.merge_prob,
-                    prior=self.prior,cl_a=cl_a, cl_b=cl_b,
+                    prior=self.prior,
                 )
                 if len(mus_to_merge) > 0:
                     # there are mus to merge
@@ -775,7 +724,20 @@ class ClusterNetModel(pl.LightningModule):
         if self.split_performed or self.merge_performed:
             action = "split" if self.split_performed else "merge"
             print(f"[{action.capitalize()}] K updated → {self.K} clusters")
-        
+    def on_after_backward(self):
+        if self.current_training_stage != "train_cluster_net":
+            return
+        total_norm = 0.0
+        any_grad = False
+        for n, p in self.cluster_net.named_parameters():
+            if p.grad is not None:
+                g = p.grad.norm().item()
+                total_norm += g
+                any_grad = True
+                if (self.current_epoch)%50==0:
+                    print(f"[grad] {n}: {g:.6f}")
+        if (self.current_epoch)%50==0:
+            print(f"[grad] cluster_net total: {total_norm:.6f}, any_grad={any_grad}")    
     def validation_epoch_end(self, outputs):
         # Take mean of all batch losses
         avg_loss = torch.stack([x["loss"] for x in outputs]).mean()
@@ -838,19 +800,8 @@ class ClusterNetModel(pl.LightningModule):
 
         subclus_opt.param_groups[0]["params"] = list(self.subclustering_net.parameters())
 
-    def perform_split_operations(self, split_decisions, split_overrides=None):
+    def perform_split_operations(self, split_decisions):
         # split_decisions is a list of k boolean indicators of whether we would want to split cluster k
-        if split_overrides:
-            D = self.mus_sub.shape[1]
-            for k, ov in split_overrides.items():
-                cov = torch.eye(D) * ov["cov_const"]
-                self.mus_sub[2 * k] = ov["mu1"]
-                self.mus_sub[2 * k + 1] = ov["mu2"]
-                self.covs_sub[2 * k] = cov
-                self.covs_sub[2 * k + 1] = cov
-                self.pi_sub[2 * k] = ov["pi1"]
-                self.pi_sub[2 * k + 1] = ov["pi2"]
-                print(f"  [Split k={k}] applied seeded_bipartition override to mus_sub/covs_sub/pi_sub")
         # update the cluster net to have the new K
         if not self.hparams.ignore_subclusters:
             clus_opt = self.optimizers()[self.optimizers_dict_idx["cluster_net_opt"]]

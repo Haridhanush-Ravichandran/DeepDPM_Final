@@ -9,12 +9,7 @@ import numpy as np
 from math import lgamma
 
 from kmeans_pytorch import kmeans as GPU_KMeans
-from src.clustering_models.clusternet_modules.utils.clustering_utils.pairwise_constraint_overrides import (
-    resolve_split_decision,
-    resolve_merge_decision,
-    get_violation_seeds,
-    seeded_bipartition,
-)
+
 from sklearn.neighbors import NearestNeighbors
 from src.clustering_models.clusternet_modules.utils.clustering_utils.clustering_operations import (
     _create_subclusters,
@@ -22,16 +17,7 @@ from src.clustering_models.clusternet_modules.utils.clustering_utils.clustering_
     init_mus_and_covs_sub,
     comp_subclusters_params_min_dist
 )
-from src.clustering_models.clusternet_modules.utils.clustering_utils.split_merge_operations import (
-    _create_subclusters,
-    compute_data_covs_soft_assignment,
-    init_mus_and_covs_sub,
-    comp_subclusters_params_min_dist
-)
-from src.clustering_models.clusternet_modules.utils.clustering_utils.pairwise_constraint_overrides import (
-    resolve_split_decision,
-    resolve_merge_decision,
-)
+
 
 def log_Hastings_ratio_split(
     k,alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
@@ -92,9 +78,9 @@ def log_Hastings_ratio_merge(
     print(f"  [Merge H] H={float(H):.4f} | ll_k={log_ll_k:.4f} ll_k1={log_ll_k_1:.4f} ll_k2={log_ll_k_2:.4f} | N=({N_k_1},{N_k_2}) | accepted={decision}")
     return decision
 
+
 def split_rule(
-    k, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=None, ignore_subclusters=False,
-    cl_a=None, cl_b=None, hard_override=False, cl_codes_a=None, cl_codes_b=None
+    k, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=None, ignore_subclusters=False
 ):
     # look at the points assigned to k
     codes_ind = logits.argmax(-1) == k
@@ -117,26 +103,9 @@ def split_rule(
         codes_k_2 = codes_k[sub_assignment == 2 * k + 1]
 
     if len(codes_k_1) <= 5 or len(codes_k_2) <= 5:
-        # small/degenerate subcluster proposal from the net. Before giving
-        # up, check whether this cluster has cannot-link violations the
-        # net's proposal ignored -- if so, try a constraint-seeded split
-        # instead of the net's (degenerate) one.
-        override = None
-        if cl_a is not None and cl_codes_a is not None:
-            seeds_a, seeds_b = get_violation_seeds(k, cl_a, cl_b, cl_codes_a, cl_codes_b)
-            if len(seeds_a) > 0:
-                assignment, mu1, mu2, degenerate = seeded_bipartition(codes_k, seeds_a, seeds_b)
-                n1, n2 = int((~assignment).sum()), int(assignment.sum())
-                if not degenerate and n1 > 5 and n2 > 5:
-                    codes_k_1, codes_k_2 = codes_k[~assignment], codes_k[assignment]
-                    log_ll_k = prior.log_marginal_likelihood(codes_k, mus[k])
-                    log_ll_k_1 = prior.log_marginal_likelihood(codes_k_1, mu1)
-                    log_ll_k_2 = prior.log_marginal_likelihood(codes_k_2, mu2)
-                    print(f"  [Split k={k}] seeded_bipartition_fallback ({len(seeds_a)} violating pair(s), net proposal was degenerate) -> N=({n1},{n2})")
-                    override = {"mu1": mu1, "mu2": mu2, "cov_const": cov_const,
-                                "pi1": n1 / len(codes), "pi2": n2 / len(codes)}
-                    return [k, True, override]
+        # small subclusters
         print(f"  [Split k={k}] REJECTED — subclusters too small (N_k1={len(codes_k_1)}, N_k2={len(codes_k_2)})")
+
         return [k, False]
 
     # compute log marginal likelihood
@@ -149,12 +118,9 @@ def split_rule(
 
     # use log for overflows
     # Hastings ratio in log space
-    stat_decision = log_Hastings_ratio_split(
-        k, alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
-    )
-    decision, reason = resolve_split_decision(k, stat_decision, cl_a, cl_b, hard_override=hard_override)
-    print(f"  [Split k={k}] {reason} | stat_decision={stat_decision} -> final={decision}")
-    return [k, decision, None]
+    return [k, log_Hastings_ratio_split(
+        k,alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, split_prob
+    )]
 
 
 def compute_split_log_marginal_ll():
@@ -183,27 +149,28 @@ def compute_split_log_ll(
 
 
 def split_step(
-    K, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=None, ignore_subclusters=False,
-    cl_a=None, cl_b=None, hard_override=False, cl_codes_a=None, cl_codes_b=None
+    K, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=None, ignore_subclusters=False
 ):
+    # Get split decision for all the clusters in parallel
+    # from joblib import Parallel, delayed
+    # split_decisions = Parallel(n_jobs=2)(delayed(split_rule)(
+    #     k, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=prior, ignore_subclusters=ignore_subclusters) for k in range(K))
+
+    # returns for each cluster a list [k, True/False]
     split_decisions = []
     for k in range(K):
         split_decisions.append(
             split_rule(
-                k, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=prior, ignore_subclusters=ignore_subclusters,
-                cl_a=cl_a, cl_b=cl_b, hard_override=hard_override, cl_codes_a=cl_codes_a, cl_codes_b=cl_codes_b
+                k, codes, logits, logits_sub, mus, mus_sub, cov_const, alpha, split_prob, prior=prior, ignore_subclusters=ignore_subclusters
             )
         )
 
+    # sort list
     temp = torch.empty(K, dtype=bool)
-    overrides = {}
     for i in range(K):
         temp[split_decisions[i][0]] = split_decisions[i][1]
-        if len(split_decisions[i]) > 2 and split_decisions[i][2] is not None:
-            overrides[split_decisions[i][0]] = split_decisions[i][2]
     split_decisions = temp
-    return split_decisions, overrides
-
+    return split_decisions
 
 
 def update_clusters_params_split(
@@ -475,8 +442,7 @@ def update_models_parameters_merge(
 
 
 def merge_step(
-    mus, logits, codes, K, raise_merge_proposals, cov_const, alpha, merge_prob, h_merge="pairs", prior=None,
-    cl_a=None, cl_b=None, hard_override=True
+    mus, logits, codes, K, raise_merge_proposals, cov_const, alpha, merge_prob, h_merge="pairs", prior=None
 ):
     """
     we will cluster all the mus into @h_merge clusters.
@@ -494,7 +460,6 @@ def merge_step(
     mus_to_merge, highest_ll_mus = [], []
 
     if raise_merge_proposals == "kmeans":
-        
         labels, cluster_centers = GPU_KMeans(X=mus.detach(), num_clusters=n_cluster, device=torch.device('cuda:0'))
 
         for i in range(n_cluster):
@@ -502,8 +467,7 @@ def merge_step(
             perm = torch.randperm(len(chosen_ind))
             # shuffle mus before choosing merges
             merge_decision, highest_ll = merge_rule(
-                mus, logits, codes, chosen_ind[perm], alpha, cov_const, merge_prob, prior=prior,
-                cl_a=cl_a, cl_b=cl_b, hard_override=hard_override
+                mus, logits, codes, chosen_ind[perm], alpha, cov_const, merge_prob, prior=prior
             )
             # merge decision returns a boolean array with the decision on whether to merge each pair
             # so, if we had N chosen mus, merge decision will be of size N/2. If it's true at 0
@@ -522,7 +486,6 @@ def merge_step(
         raise_merge_proposals == "brute_force_NN"
         or raise_merge_proposals == "brute_force_NN_with_bad"
     ):
-        
         n_neighbors = min(3, K)
         neigh = NearestNeighbors(n_neighbors=n_neighbors)
         neigh.fit(mus)
@@ -531,14 +494,12 @@ def merge_step(
         keys = np.arange(len(mus))
         mus_to_consider_to_merge = dict(zip(keys, keys))
         for proposed_pair in neigh_inds_per_cluster:
-            
             p_0 = proposed_pair[0].item()
             p_1 = proposed_pair[1].item()
             if p_0 in mus_to_consider_to_merge.keys() and p_1 in mus_to_consider_to_merge.keys():
                 # did not merge before
                 merge_decision, highest_ll = merge_rule(
-                    mus, logits, codes, proposed_pair, alpha, cov_const, merge_prob, prior=prior,
-                    cl_a=cl_a, cl_b=cl_b, hard_override=hard_override
+                    mus, logits, codes, proposed_pair, alpha, cov_const, merge_prob, prior=prior
                 )
                 if merge_decision[0]:
                     # merge is accepted
@@ -548,7 +509,6 @@ def merge_step(
                     highest_ll_mus.append(highest_ll)
 
         if raise_merge_proposals == "brute_force_NN_with_bad":
-            
             # add bad mus for sanity check
             for i in range(len(mus)):
                 neighbors_ind = A[i, :]
@@ -559,15 +519,13 @@ def merge_step(
                     sampled = torch.randint(len(mus), size=(1,)).item()
                     flag = neighbors_ind[sampled]
                 merge_decision, highest_ll = merge_rule(
-                    mus, logits, codes, torch.tensor([i, sampled]), alpha, cov_const, merge_prob, prior=prior,
-                    cl_a=cl_a, cl_b=cl_b, hard_override=hard_override
+                    mus, logits, codes, torch.tensor([i, sampled]), alpha, cov_const, merge_prob, prior=prior
                 )
-
 
     return mus_to_merge, highest_ll_mus
 
 
-def merge_rule(mus, logits, codes, k_inds, alpha, cov_const, merge_prob, prior=None, cl_a=None, cl_b=None, hard_override=True):
+def merge_rule(mus, logits, codes, k_inds, alpha, cov_const, merge_prob, prior=None):
     """
     Gets an input a random permutation of indices of the clusters to consider merge.
     We will consider merges of pairs.
@@ -614,10 +572,6 @@ def merge_rule(mus, logits, codes, k_inds, alpha, cov_const, merge_prob, prior=N
             log_ll_k_1 = prior.log_marginal_likelihood(codes_k_1, mus[k_1])
             log_ll_k_2 = prior.log_marginal_likelihood(codes_k_2, mus[k_2])
 
-        stat_decision = log_Hastings_ratio_merge(alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, merge_prob)
-        decision, reason = resolve_merge_decision(int(k_1), int(k_2), stat_decision, cl_a, cl_b, hard_override=hard_override)
-        print(f"  [Merge {int(k_1)},{int(k_2)}] {reason} | stat_decision={stat_decision} -> final={decision}")
-        decisions.append(decision)
+        decisions.append(log_Hastings_ratio_merge(alpha, N_k_1, N_k_2, log_ll_k_1, log_ll_k_2, log_ll_k, merge_prob))
         highest_ll.append(k_inds[i: i + 2][int(log_ll_k_1 < log_ll_k_2)])
-
     return decisions, highest_ll

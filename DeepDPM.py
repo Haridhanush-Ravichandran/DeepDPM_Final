@@ -467,7 +467,7 @@ def train_cluster_net():
         logger = DummyLogger()
     else:
         logger = TensorBoardLogger(
-            save_dir="log_dir",
+            save_dir="logs_dir",
             name=args.exp_name)
 
     check_args(args, dataset_obj.data_dim)
