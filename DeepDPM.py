@@ -125,6 +125,13 @@ def run_on_embeddings_hyperparams(parent_parser):
         default=False,
     )
     parser.add_argument(
+        "--subcluster_contrastive_weight",
+        type=float,
+        default=0.5,
+        help="Weight on the pairwise contrastive term applied to subcluster assignments. "
+             "0.5 matches the value this was previously hardcoded to.",
+    )
+    parser.add_argument(
         "--init_cluster_net_weights",
         action="store_true",
         default=False,
@@ -491,6 +498,10 @@ def train_cluster_net():
     trainer.fit(model, train_loader, val_loader)
 
     print("Finished training!")
+
+    # Plot cluster loss, subcluster loss, pairwise loss, and K together in one figure
+    model.plot_training_history(save_path=f"logs/{args.exp_name}/training_history.png")
+
     # evaluate last model
     dataset = dataset_obj.get_train_data()
     data = dataset.tensors[0]
