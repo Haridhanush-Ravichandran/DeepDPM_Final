@@ -296,8 +296,18 @@ class ClusterNetModel(pl.LightningModule):
             # z holds the pair label: 1 = same cluster, 0 = different cluster
             pair_labels = z.float().to(codes.device)
 
+            # Use softmax cluster-assignment probabilities rather than raw
+            # codes: raw codes/codes_b are leaf tensors from the dataset with
+            # no gradient path to any parameter (feature_extractor is None in
+            # this embeddings-only pipeline), so contrastive_loss computed on
+            # them can log a value but can never influence training. logits/
+            # logits_b come from cluster_net, so softmax(logits) does carry a
+            # real gradient back to it -- this is what actually lets the
+            # pairwise term pull/push cluster assignments.
+            soft_a = torch.softmax(logits, dim=-1)
+            soft_b = torch.softmax(logits_b, dim=-1)
             pairwise_loss = self.contrastive_loss(
-                codes, codes_b, pair_labels, margin=self.hparams.contrastive_margin
+                soft_a, soft_b, pair_labels, margin=self.hparams.contrastive_margin
             )
             self.log("cluster_net_train/train/pairwise_loss", pairwise_loss, on_epoch=True)
             self._epoch_pairwise_losses.append(pairwise_loss.detach().item())
@@ -364,6 +374,58 @@ class ClusterNetModel(pl.LightningModule):
         else:
             return None
 
+    '''def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
+        """Supervised contrastive loss for pairwise embeddings.
+
+        Uses cosine-similarity with a temperature scale (SupCon-style).
+        Optionally blends hard pair labels with soft cluster-assignment
+        agreement so the loss stays coherent across split/merge events.
+
+        Args:
+            z_a (Tensor): Anchor embeddings          [N, D]
+            z_b (Tensor): Paired embeddings          [N, D]
+            pair_labels (Tensor): 1=same, 0=different [N]  (float)
+            soft_a (Tensor | None): Softmax cluster assignments for z_a [N, K]
+            soft_b (Tensor | None): Softmax cluster assignments for z_b [N, K]
+
+        Returns:
+            Scalar loss.
+        """
+        temperature   = getattr(self.hparams, "contrastive_temperature", 0.07)
+        soft_blend    = getattr(self.hparams, "contrastive_soft_blend",  0.0)
+
+        # ── L2-normalise so dot-product == cosine similarity ──────────────
+        z_a_n = F.normalize(z_a, dim=1)
+        z_b_n = F.normalize(z_b, dim=1)
+        sim   = (z_a_n * z_b_n).sum(dim=1) / temperature   # [N]
+
+        # ── Blend hard label with soft responsibility agreement ───────────
+        # soft_agreement ∈ [0,1]: high when both embeddings have the same
+        # dominant cluster, low when they differ — tracks K as it changes.
+        if soft_a is not None and soft_b is not None:
+            soft_agreement = (soft_a * soft_b).sum(dim=1).detach()   # [N]
+            target = (1.0 - soft_blend) * pair_labels + soft_blend * soft_agreement
+        else:
+            target = pair_labels
+
+        # ── Binary cross-entropy: same pair → high sim, diff pair → low ──
+        loss = F.binary_cross_entropy_with_logits(sim, target)
+        return loss
+    def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
+        temperature = getattr(self.hparams, "contrastive_temperature", 0.07)
+
+        # Use soft cluster assignments as the similarity signal
+        # This ensures gradients flow through class_fc2 even when cluster_loss_weight=0
+        if soft_a is not None and soft_b is not None:
+            sim = (soft_a * soft_b).sum(dim=1) / temperature  # [N]
+        else:
+            z_a_n = F.normalize(z_a, dim=1)
+            z_b_n = F.normalize(z_b, dim=1)
+            sim = (z_a_n * z_b_n).sum(dim=1) / temperature
+
+        target = pair_labels
+        loss = F.binary_cross_entropy_with_logits(sim, target)
+        return loss'''
 
     def validation_step(self, batch, batch_idx):
         if batch[0].ndim==3:
@@ -619,21 +681,37 @@ class ClusterNetModel(pl.LightningModule):
                 and not self.hparams.ignore_subclusters
                 and not self.hparams.contrastive_only
             ):
-                (
-                    self.pi_sub,
-                    self.mus_sub,
-                    self.covs_sub,
-                ) = self.training_utils.comp_subcluster_params(
-                    self.train_resp,
-                    self.train_resp_sub,
-                    self.codes,
-                    self.K,
-                    self.n_sub,
-                    self.mus_sub,
-                    self.covs_sub,
-                    self.pi_sub,
-                    self.prior,
-                )
+                # A subcluster can transiently end up with zero assigned points
+                # (more likely now that the pairwise term actively perturbs
+                # assignments -- see contrastive_weight). comp_subcluster_params
+                # / init_mus_and_covs_sub don't guard against this the way
+                # split_step does, and raise an IndexError when it happens.
+                # Skip this epoch's subcluster-stat refresh rather than crashing
+                # the whole run; mus_sub/covs_sub/pi_sub just keep their
+                # previous values until the next epoch where all subclusters
+                # are non-empty.
+                try:
+                    (
+                        self.pi_sub,
+                        self.mus_sub,
+                        self.covs_sub,
+                    ) = self.training_utils.comp_subcluster_params(
+                        self.train_resp,
+                        self.train_resp_sub,
+                        self.codes,
+                        self.K,
+                        self.n_sub,
+                        self.mus_sub,
+                        self.covs_sub,
+                        self.pi_sub,
+                        self.prior,
+                    )
+                except IndexError as e:
+                    print(
+                        f"[Epoch {self.current_epoch}] Skipping subcluster param "
+                        f"update -- a subcluster was empty this epoch ({e}). "
+                        f"Keeping previous mus_sub/covs_sub/pi_sub."
+                    )
             if perform_split and not freeze_mus:
                 # perform splits
                 self.training_utils.last_performed = "split"
