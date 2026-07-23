@@ -80,6 +80,20 @@ class ClusterNetModel(pl.LightningModule):
         self.mus_inds_to_merge = None
         self.mus_ind_to_split = None
 
+        # ---- training history for post-training diagnostics plot ----
+        self.history = {
+            "epoch": [],
+            "K": [],
+            "cluster_loss": [],
+            "subcluster_loss": [],
+            "pairwise_loss": [],
+            "sub_pairwise_loss": [],
+        }
+        self._epoch_cluster_losses = []
+        self._epoch_subcluster_losses = []
+        self._epoch_pairwise_losses = []
+        self._epoch_sub_pairwise_losses = []
+
     def contrastive_loss(self, z1, z2, pair_label, margin=1.8):
 
         z1 = torch.nn.functional.normalize(z1, dim=1)
@@ -123,6 +137,11 @@ class ClusterNetModel(pl.LightningModule):
         
 
     def on_train_epoch_start(self):
+        # reset per-epoch loss trackers
+        self._epoch_cluster_losses = []
+        self._epoch_subcluster_losses = []
+        self._epoch_pairwise_losses = []
+        self._epoch_sub_pairwise_losses = []
         # get current training_stage
         self.current_training_stage = (
             "gather_codes" if self.current_epoch == 0 and not hasattr(self, "mus") else "train_cluster_net"
@@ -233,11 +252,17 @@ class ClusterNetModel(pl.LightningModule):
             optimizer_idx ([type]): The pytorch optimizer index
         """
         codes = codes.reshape(-1, self.codes_dim)
-        codes_a = torch.nn.functional.normalize(codes, dim=1)
 
-        logits = self.cluster_net(codes_a)
+        # NOTE: codes are intentionally left un-normalized here. contrastive_loss()
+        # already L2-normalizes its own inputs internally, so normalizing here too
+        # would only create a scale mismatch between what the cluster/subcluster
+        # nets and mu/cov statistics see (raw codes) and what produced logits here
+        # (normalized codes) -- with no benefit, since the contrastive term gets
+        # its normalization regardless. Keeping codes raw everywhere also means
+        # the unpaired code path below is numerically identical to vanilla DeepDPM.
+        logits = self.cluster_net(codes)
         cluster_loss = self.training_utils.cluster_loss_function(
-            codes_a,
+            codes,
             logits,
             model_mus=self.mus,
             K=self.K,
@@ -252,10 +277,10 @@ class ClusterNetModel(pl.LightningModule):
             self.hparams.cluster_loss_weight * cluster_loss,
             on_epoch=True,
         )
+        self._epoch_cluster_losses.append(cluster_loss.detach().item())
         loss = self.hparams.cluster_loss_weight * cluster_loss
         if codes_b is not None:
             codes_b = codes_b.reshape(-1, self.codes_dim)
-            codes_b = torch.nn.functional.normalize(codes_b, dim=1)
             logits_b = self.cluster_net(codes_b)
             cluster_loss_b = self.training_utils.cluster_loss_function(
                 codes_b,
@@ -268,23 +293,28 @@ class ClusterNetModel(pl.LightningModule):
                 logger=self.logger
             )
 
-            # y holds the pair label: 1 = same cluster, 0 = different cluster
+            # z holds the pair label: 1 = same cluster, 0 = different cluster
             pair_labels = z.float().to(codes.device)
 
-            '''# Soft responsibilities from the cluster net [N, K]
-            soft_a = torch.softmax(logits,   dim=-1)   # P(cluster | codes_a)
-            soft_b = torch.softmax(logits_b, dim=-1)   # P(cluster | codes_b)
-
             pairwise_loss = self.contrastive_loss(
-                codes, codes_b, pair_labels, soft_a, soft_b
-            )'''
-            soft_a = torch.softmax(logits, dim=-1)
-            soft_b = torch.softmax(logits_b, dim=-1)
-            pairwise_loss = self.contrastive_loss(
-                soft_a, soft_b, pair_labels, margin=self.hparams.contrastive_margin
+                codes, codes_b, pair_labels, margin=self.hparams.contrastive_margin
             )
-            self.log("cluster_net_train/train/pairwise_loss", pairwise_loss/self.K, on_epoch=True)
-            loss = loss + (0) * pairwise_loss + (0)*cluster_loss_b
+            self.log("cluster_net_train/train/pairwise_loss", pairwise_loss, on_epoch=True)
+            self._epoch_pairwise_losses.append(pairwise_loss.detach().item())
+
+            # cluster_loss_weight keeps its usual meaning (weight on GMM fit vs.
+            # everything else) by averaging the two branches' cluster_loss rather
+            # than summing them -- summing would silently double the effective
+            # weight of the cluster-fit term relative to the unpaired code path.
+            # contrastive_weight is now the single, explicit knob controlling how
+            # strongly the pairwise signal pulls on the embeddings (previously
+            # this was implicitly (1 - cluster_loss_weight), which is zero under
+            # the library's default cluster_loss_weight=1 -- i.e. the contrastive
+            # term was silently inert unless cluster_loss_weight was hand-tuned down).
+            loss = (
+                self.hparams.cluster_loss_weight * 0.5 * (cluster_loss + cluster_loss_b)
+                + self.hparams.contrastive_weight * pairwise_loss
+            )
         if not self.hparams.ignore_subclusters and optimizer_idx == self.optimizers_dict_idx["subcluster_net_opt"]:
             logits = logits.detach()
             if self.hparams.start_sub_clustering <= self.current_epoch:
@@ -294,6 +324,7 @@ class ClusterNetModel(pl.LightningModule):
                     covs_sub=self.covs_sub if self.hparams.subcluster_loss in ("diag_NIG", "KL_GMM_2") else None,
                     pis_sub=self.pi_sub
                 )
+                self._epoch_subcluster_losses.append(subcluster_loss.detach().item())
                 loss = self.hparams.subcluster_loss_weight * subcluster_loss
 
                 if codes_b is not None:
@@ -305,7 +336,8 @@ class ClusterNetModel(pl.LightningModule):
                         margin=self.hparams.contrastive_margin
                     )
                     self.log("cluster_net_train/train/sub_pairwise_loss", sub_pairwise_loss, on_epoch=True)
-                    loss = loss 
+                    self._epoch_sub_pairwise_losses.append(sub_pairwise_loss.detach().item())
+                    loss = loss + self.hparams.subcluster_contrastive_weight * sub_pairwise_loss
             else:
                 sublogits = None
                 loss = None
@@ -456,13 +488,17 @@ class ClusterNetModel(pl.LightningModule):
             logits = None
 
         # log val data
+        # (previously this wrote into a new `self.codes_a` attribute that nothing
+        # else reads; `self.codes` is what log_clustering_metrics() uses for the
+        # silhouette-score diagnostic regardless of stage, so it needs to actually
+        # hold this epoch's validation embeddings while stage=="val")
         (
-            self.codes_a,
+            self.codes,
             self.val_gt,
             self.val_resp,
             self.val_resp_sub,
         ) = self.training_utils.log_codes_and_responses(
-            codes_a,
+            self.codes,
             self.val_gt,
             self.val_resp,
             model_resp_sub=self.val_resp_sub,
@@ -724,20 +760,24 @@ class ClusterNetModel(pl.LightningModule):
         if self.split_performed or self.merge_performed:
             action = "split" if self.split_performed else "merge"
             print(f"[{action.capitalize()}] K updated → {self.K} clusters")
-    def on_after_backward(self):
-        if self.current_training_stage != "train_cluster_net":
-            return
-        total_norm = 0.0
-        any_grad = False
-        for n, p in self.cluster_net.named_parameters():
-            if p.grad is not None:
-                g = p.grad.norm().item()
-                total_norm += g
-                any_grad = True
-                if (self.current_epoch)%50==0:
-                    print(f"[grad] {n}: {g:.6f}")
-        if (self.current_epoch)%50==0:
-            print(f"[grad] cluster_net total: {total_norm:.6f}, any_grad={any_grad}")    
+
+        # ---- record this epoch's history (skip the code-gathering epoch) ----
+        if self.current_training_stage != "gather_codes":
+            self.history["epoch"].append(self.current_epoch)
+            self.history["K"].append(self.K)
+            self.history["cluster_loss"].append(
+                float(np.mean(self._epoch_cluster_losses)) if self._epoch_cluster_losses else np.nan
+            )
+            self.history["subcluster_loss"].append(
+                float(np.mean(self._epoch_subcluster_losses)) if self._epoch_subcluster_losses else np.nan
+            )
+            self.history["pairwise_loss"].append(
+                float(np.mean(self._epoch_pairwise_losses)) if self._epoch_pairwise_losses else np.nan
+            )
+            self.history["sub_pairwise_loss"].append(
+                float(np.mean(self._epoch_sub_pairwise_losses)) if self._epoch_sub_pairwise_losses else np.nan
+            )
+
     def validation_epoch_end(self, outputs):
         # Take mean of all batch losses
         avg_loss = torch.stack([x["loss"] for x in outputs]).mean()
@@ -1154,8 +1194,84 @@ class ClusterNetModel(pl.LightningModule):
             self.log(f"cluster_net_train/{stage}/alt_{alt_stage}_{stage}_completeness", completeness, on_epoch=True, on_step=False)
             self.log(f"cluster_net_train/{stage}/alt_{alt_stage}_unique_z", unique_z, on_epoch=True, on_step=False)
 
+    def plot_training_history(self, save_path="logs/training_history.png"):
+        """
+        Plot cluster loss, subcluster loss, pairwise loss, and K each in
+        their own subplot, arranged in a 2x2 grid within a single image.
+        Call this after trainer.fit() completes.
+
+        Args:
+            save_path (str): where to save the resulting PNG.
+
+        Returns:
+            The matplotlib Figure, or None if there is no recorded history.
+        """
+        import os
+        epochs = self.history["epoch"]
+        if len(epochs) == 0:
+            print("No training history recorded — nothing to plot.")
+            return None
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+        # --- Cluster loss ---
+        ax = axes[0, 0]
+        ax.plot(epochs, self.history["cluster_loss"], color="tab:blue")
+        ax.set_title("Cluster loss")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.grid(alpha=0.3)
+
+        # --- Subcluster loss ---
+        ax = axes[0, 1]
+        ax.plot(epochs, self.history["subcluster_loss"], color="tab:orange")
+        ax.set_title("Subcluster loss")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.grid(alpha=0.3)
+
+        # --- Pairwise loss (+ sub-pairwise loss if present) ---
+        ax = axes[1, 0]
+        ax.plot(epochs, self.history["pairwise_loss"], color="tab:green", label="pairwise loss")
+        if any(not np.isnan(v) for v in self.history["sub_pairwise_loss"]):
+            ax.plot(epochs, self.history["sub_pairwise_loss"], color="tab:red", label="sub-pairwise loss")
+            ax.legend()
+        ax.set_title("Pairwise loss")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.grid(alpha=0.3)
+
+        # --- K (number of clusters) ---
+        ax = axes[1, 1]
+        ax.step(epochs, self.history["K"], where="post", color="black", linewidth=2)
+        ax.set_title("Number of clusters (K)")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("K")
+        ax.grid(alpha=0.3)
+
+        plt.suptitle("Training history", fontsize=14, y=1.02)
+        plt.tight_layout()
+
+        out_dir = os.path.dirname(save_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Training history plot saved to: {save_path}")
+        return fig
+
     @staticmethod
     def add_model_specific_args(parent_parser):
+        # NOTE: this parser is a separate hparam source from DeepDPM.py's
+        # parse_minimal_args()/run_on_embeddings_hyperparams() -- it is not called
+        # anywhere in this repo's DeepDPM.py, so editing defaults here has no
+        # effect on runs launched via `python DeepDPM.py`. It's kept here (and its
+        # own pre-existing defaults such as cluster_loss_weight/train_cluster_net
+        # left untouched) in case another entry point still imports it. The four
+        # contrastive_* args below are added only so that entry point won't raise
+        # an AttributeError if it's ever run with paired data -- ClusterNetModel
+        # references self.hparams.contrastive_margin etc. whenever codes_b is not
+        # None, regardless of which parser produced hparams.
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument(
             "--init_k", default=3, type=int, help="number of initial clusters"
@@ -1452,8 +1568,23 @@ class ClusterNetModel(pl.LightningModule):
             help="How often to evaluate the net"
         )
         parser.add_argument(
+            "--contrastive_weight",
+            type=float,
+            default=1.0,
+        )
+        parser.add_argument(
+            "--contrastive_margin",
+            type=float,
+            default=1.0,
+        )
+        parser.add_argument(
+            "--contrastive_only",
+            action="store_true",
+            default=False,
+        )
+        parser.add_argument(
             "--subcluster_contrastive_weight",
             type=float,
-            default=0.3,
+            default=0.5,
         )
         return parser
