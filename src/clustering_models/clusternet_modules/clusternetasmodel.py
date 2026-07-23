@@ -369,6 +369,36 @@ class ClusterNetModel(pl.LightningModule):
                 sublogits=sublogits,
             )
 
+            # DIAGNOSTIC (see conversation): also feed codes_b into the same
+            # mu/cov/eval accumulators, but ONLY for positive pairs (z==1),
+            # where y is guaranteed to be codes_b's true label too. This
+            # roughly doubles the effective sample size available to
+            # comp_cluster_params/comp_subcluster_params for those points,
+            # without risking corrupting train_gt with a wrong label for
+            # negative pairs. Toggle with --include_codes_b_in_stats.
+            if (
+                getattr(self.hparams, "include_codes_b_in_stats", False)
+                and codes_b is not None
+                and z is not None
+            ):
+                pos_mask = z.bool()
+                if pos_mask.any():
+                    (
+                        self.codes,
+                        self.train_gt,
+                        self.train_resp,
+                        self.train_resp_sub,
+                    ) = self.training_utils.log_codes_and_responses(
+                        self.codes,
+                        self.train_gt,
+                        self.train_resp,
+                        self.train_resp_sub,
+                        codes_b[pos_mask],
+                        logits_b.detach()[pos_mask] if logits_b is not None else None,
+                        y[pos_mask],
+                        sublogits=sublogits_b[pos_mask] if (codes_b is not None and 'sublogits_b' in locals() and sublogits_b is not None) else None,
+                    )
+
         if loss is not None:
             return loss
         else:

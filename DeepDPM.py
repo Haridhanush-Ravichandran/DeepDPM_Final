@@ -132,6 +132,15 @@ def run_on_embeddings_hyperparams(parent_parser):
              "0.5 matches the value this was previously hardcoded to.",
     )
     parser.add_argument(
+        "--include_codes_b_in_stats",
+        action="store_true",
+        default=False,
+        help="Diagnostic: also feed codes_b into the mu/cov/eval accumulators "
+             "for positive (same-cluster) pairs, roughly doubling the effective "
+             "sample size available to comp_cluster_params for those points. "
+             "Off by default -- only affects paired-data runs when set.",
+    )
+    parser.add_argument(
         "--init_cluster_net_weights",
         action="store_true",
         default=False,
