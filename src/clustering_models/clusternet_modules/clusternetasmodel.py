@@ -364,58 +364,6 @@ class ClusterNetModel(pl.LightningModule):
         else:
             return None
 
-    '''def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
-        """Supervised contrastive loss for pairwise embeddings.
-
-        Uses cosine-similarity with a temperature scale (SupCon-style).
-        Optionally blends hard pair labels with soft cluster-assignment
-        agreement so the loss stays coherent across split/merge events.
-
-        Args:
-            z_a (Tensor): Anchor embeddings          [N, D]
-            z_b (Tensor): Paired embeddings          [N, D]
-            pair_labels (Tensor): 1=same, 0=different [N]  (float)
-            soft_a (Tensor | None): Softmax cluster assignments for z_a [N, K]
-            soft_b (Tensor | None): Softmax cluster assignments for z_b [N, K]
-
-        Returns:
-            Scalar loss.
-        """
-        temperature   = getattr(self.hparams, "contrastive_temperature", 0.07)
-        soft_blend    = getattr(self.hparams, "contrastive_soft_blend",  0.0)
-
-        # ── L2-normalise so dot-product == cosine similarity ──────────────
-        z_a_n = F.normalize(z_a, dim=1)
-        z_b_n = F.normalize(z_b, dim=1)
-        sim   = (z_a_n * z_b_n).sum(dim=1) / temperature   # [N]
-
-        # ── Blend hard label with soft responsibility agreement ───────────
-        # soft_agreement ∈ [0,1]: high when both embeddings have the same
-        # dominant cluster, low when they differ — tracks K as it changes.
-        if soft_a is not None and soft_b is not None:
-            soft_agreement = (soft_a * soft_b).sum(dim=1).detach()   # [N]
-            target = (1.0 - soft_blend) * pair_labels + soft_blend * soft_agreement
-        else:
-            target = pair_labels
-
-        # ── Binary cross-entropy: same pair → high sim, diff pair → low ──
-        loss = F.binary_cross_entropy_with_logits(sim, target)
-        return loss
-    def contrastive_loss(self, z_a, z_b, pair_labels, soft_a=None, soft_b=None):
-        temperature = getattr(self.hparams, "contrastive_temperature", 0.07)
-
-        # Use soft cluster assignments as the similarity signal
-        # This ensures gradients flow through class_fc2 even when cluster_loss_weight=0
-        if soft_a is not None and soft_b is not None:
-            sim = (soft_a * soft_b).sum(dim=1) / temperature  # [N]
-        else:
-            z_a_n = F.normalize(z_a, dim=1)
-            z_b_n = F.normalize(z_b, dim=1)
-            sim = (z_a_n * z_b_n).sum(dim=1) / temperature
-
-        target = pair_labels
-        loss = F.binary_cross_entropy_with_logits(sim, target)
-        return loss'''
 
     def validation_step(self, batch, batch_idx):
         if batch[0].ndim==3:
