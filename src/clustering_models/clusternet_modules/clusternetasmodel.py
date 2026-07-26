@@ -338,13 +338,48 @@ class ClusterNetModel(pl.LightningModule):
                 loss = self.hparams.subcluster_loss_weight * subcluster_loss
 
                 if codes_b is not None:
-                    sublogits_b = self.subcluster(codes_b, logits_b.detach())
+                    logits_b_detached = logits_b.detach()
+                    sublogits_b = self.subcluster(codes_b, logits_b_detached)
                     pair_labels = z.float().to(codes.device)
 
-                    sub_pairwise_loss = self.contrastive_loss(
-                        sublogits, sublogits_b, pair_labels,
-                        margin=self.hparams.contrastive_margin
-                    )
+                    # sublogits/sublogits_b are [N, 2K] with exactly 2 nonzero
+                    # entries per row: the two subclusters of that sample's
+                    # own PREDICTED top-level cluster (see subcluster()).
+                    # Comparing a pair's rows is only meaningful when both
+                    # samples share the same predicted cluster:
+                    #   - different predicted clusters -> the two rows have
+                    #     disjoint support, so the pair is exactly orthogonal
+                    #     (L2 distance = sqrt(2)) no matter what the
+                    #     subclustering net has learned. With a margin
+                    #     <= sqrt(2) the negative-pair term is then
+                    #     identically zero for every such pair -- it isn't
+                    #     learning anything, it's trivially satisfied by
+                    #     construction. This is why this loss was flat.
+                    #   - same predicted cluster -> both rows are nonzero on
+                    #     the same 2 dimensions, so the comparison is a real
+                    #     2-way decision with gradient in both directions:
+                    #     for label-positive pairs (z=1) it pulls the pair
+                    #     toward the same subcluster; for label-negative
+                    #     pairs (z=0) that the top-level net *incorrectly*
+                    #     merged into one cluster, it pushes them into
+                    #     different subclusters -- exactly the within-cluster
+                    #     signal that can later help a split proposal find
+                    #     that boundary.
+                    same_pred_cluster = (logits.argmax(-1) == logits_b_detached.argmax(-1))
+
+                    if same_pred_cluster.any():
+                        sub_pairwise_loss = self.contrastive_loss(
+                            sublogits[same_pred_cluster],
+                            sublogits_b[same_pred_cluster],
+                            pair_labels[same_pred_cluster],
+                            margin=self.hparams.subcluster_contrastive_margin,
+                        )
+                    else:
+                        # no pair this batch shares a predicted cluster --
+                        # nothing meaningful to compare at the subcluster
+                        # level. A zero here is a real "no signal this
+                        # batch", not a trivially-satisfied margin term.
+                        sub_pairwise_loss = torch.zeros((), device=codes.device)
                     self.log("cluster_net_train/train/sub_pairwise_loss", sub_pairwise_loss, on_epoch=True)
                     self._epoch_sub_pairwise_losses.append(sub_pairwise_loss.detach().item())
                     loss = loss + self.hparams.subcluster_contrastive_weight * sub_pairwise_loss
@@ -1642,5 +1677,15 @@ class ClusterNetModel(pl.LightningModule):
             "--subcluster_contrastive_weight",
             type=float,
             default=0.5,
+        )
+        parser.add_argument(
+            "--subcluster_contrastive_margin",
+            type=float,
+            default=1.0,
+            help="Margin for the sub-level pairwise term. Kept separate from "
+                 "--contrastive_margin: the sub-level comparison is always "
+                 "over a fixed 2-dim simplex (max possible distance sqrt(2)), "
+                 "unlike the main-level term whose space shrinks as K grows, "
+                 "so the two need independent tuning.",
         )
         return parser

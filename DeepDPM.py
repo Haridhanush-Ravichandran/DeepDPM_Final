@@ -132,6 +132,16 @@ def run_on_embeddings_hyperparams(parent_parser):
              "0.5 matches the value this was previously hardcoded to.",
     )
     parser.add_argument(
+        "--subcluster_contrastive_margin",
+        type=float,
+        default=1.0,
+        help="Margin for the sub-level pairwise term. Kept separate from "
+             "--contrastive_margin: the sub-level comparison is always over "
+             "a fixed 2-dim simplex (max possible distance sqrt(2)), unlike "
+             "the main-level term whose space shrinks as K grows, so the "
+             "two need independent tuning.",
+    )
+    parser.add_argument(
         "--include_codes_b_in_stats",
         action="store_true",
         default=False,
